@@ -47,6 +47,6 @@ chmod +x verify.sh
 # Once finished using the application, you can verify the content 
 # written in the file with ./verify.sh
 
-# 6. Verify the generated keys
+# 6. Verify the output
 ./verify.sh
 ```
