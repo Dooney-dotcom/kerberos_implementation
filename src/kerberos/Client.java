@@ -1,13 +1,8 @@
 package kerberos;
 
-import digests.MessageDigestWrapper;
 import utils.Utils;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.util.Scanner;
 
@@ -18,90 +13,44 @@ public class Client {
     private static final String SEPARATOR = "||";
     private static final String SPLIT_SEPARATOR = "\\|\\|";
 
+    private static String authServer, tgs, echoServer;
+
     public static void main(String[] args) throws NoSuchAlgorithmException {
-
-        if (args.length != 3) {
-            System.out.println("Errore: numero errato di argomenti.");
-            System.out.println("Utilizzo corretto: java -cp src kerberos.Client <authserver> <tgs> <echoserver>");
-            System.exit(1);
-        }
-
-        String authserver = args[0];
-        String tgs = args[1];
-        String echoserver = args[2];
-
-        if (authserver == null || authserver.isEmpty()) {
-            System.out.println("Errore: 'authserver' non può essere vuoto.");
-            System.exit(1);
-        }
-
-        if (tgs == null || tgs.isEmpty()) {
-            System.out.println("Errore: 'tgs' non può essere vuoto.");
-            System.exit(1);
-        }
-
-        if (echoserver == null || echoserver.isEmpty()) {
-            System.out.println("Errore: 'echoserver' non può essere vuoto.");
-            System.exit(1);
-        }
-
-        System.out.println("Connessione a server:");
-        System.out.println("AuthServer: " + authserver);
-        System.out.println("TGS: " + tgs);
-        System.out.println("EchoServer: " + echoserver);
+        clientInitialization(args);
 
         Scanner scanner = new Scanner(System.in);
-
-        System.out.println("Username: ");
-        String id = scanner.nextLine();
-        if(id == null || id.isEmpty()) {
+        String id = prompt("Username", "admin", scanner);
+        String id_tgs = prompt("ID TGS", "tgs1", scanner);
+        if(!id_tgs.equals("tgs1")){
             System.out.println("Invalid argument provided");
             System.exit(1);
         }
 
-        System.out.println("Password: ");
-        String psw = scanner.nextLine();
-        if(psw == null || psw.isEmpty()) {
-            System.out.println("Invalid argument provided");
-            System.exit(1);
-        }
-
-        MessageDigestWrapper messageDigestWrapper = new MessageDigestWrapper("SHA-256");
-        psw = Utils.toHexString(messageDigestWrapper.computeDigest(psw.getBytes(StandardCharsets.UTF_8)));
-        System.out.println(psw);
-        System.out.println("ID TGS: (tgs1)");
-        String id_tgs = scanner.nextLine();
-        if(id_tgs == null || !id_tgs.equals("tgs1")){
-            System.out.println("Invalid argument provided");
-            System.exit(1);
-        }
-
-        Socket socket = null;
         try {
-            socket = new Socket(authserver, AUTHENTICATION_SERVER_PORT);
+            Socket socket = new Socket(authServer, AUTHENTICATION_SERVER_PORT);
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
 
+            // Communication with authentication server
             // STEP 1: C->AD: ID||AD_C||ID_TGS||T1
             String ad_c = socket.getLocalAddress().toString();
             String t1 = String.valueOf(System.currentTimeMillis());
-            String request = id + SEPARATOR + ad_c + SEPARATOR + id_tgs + SEPARATOR + t1;
-            System.out.println(request);
-            out.println(request);
+            String message1 = String.join(SEPARATOR, id, ad_c, id_tgs, t1);
+            System.out.println("Message 1: " + message1);
+            out.println(message1);
 
             // Step 2: AS->C : E_PSW(K_CT||ID_TGS||T2||D_T2||E_K_TGS(K_CT||ID||AD_C||T2||DT2))
-            String encryptedResponse = in.readLine();
-            if(!socket.isClosed()) {
-                socket.close();
-            }
-            if (encryptedResponse.startsWith("Error")) {
-                System.out.println("Server response: " + encryptedResponse);
+            String encrypted_message2 = in.readLine();
+            closeSocket(socket);
+            if (encrypted_message2.startsWith("ERROR")) {
+                System.out.println("Server response: " + encrypted_message2);
                 return;
             }
 
-
-            // Step 3: C->TGS ID_V || E_K_TGS(K_CT||ID||AD_C||T2||DT2) || E_KCT(ID||AD_C||T3)
-            String message = Utils.decryptMessage(encryptedResponse, psw);
+            System.out.println("Message 2: " + encrypted_message2);
+            String psw = prompt("Password", "password used to generate S_K in generate_env.sh", scanner);
+            psw = Utils.getMessageDigest(psw, "SHA-256");
+            String message = Utils.decryptMessage(encrypted_message2, psw);
             String[] parts = message.split(SPLIT_SEPARATOR);
             String k_ct = parts[0];
             id_tgs = parts[1];
@@ -109,35 +58,39 @@ public class Client {
             String d_t2 = parts[3];
             String encryptedTicket = parts[4];
 
-            System.out.println("ID Server (s1): ");
-            String id_v = scanner.nextLine();
-            if(id_v == null || !id_v.equals("s1")) {
+            // Communication with Ticket Granting Server
+            // Step 3: C->TGS ID_V || E_K_TGS(K_CT||ID||AD_C||T2||DT2) || E_KCT(ID||AD_C||T3)
+
+            String id_v = prompt("ID Server", "s1", scanner);
+            if(!id_v.equals("s1")) {
                 System.out.println("Invalid argument provided");
                 System.exit(1);
             }
 
             String t3 = String.valueOf(System.currentTimeMillis());
-            String proof = id + SEPARATOR + ad_c + SEPARATOR + t3;
+            String proof = String.join(SEPARATOR, id, ad_c, t3);
             String encryptedProof = Utils.encryptMessage(proof, k_ct);
 
             socket = new Socket(tgs, TICKET_GRANTING_SERVER_PORT);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             out = new PrintWriter(socket.getOutputStream(), true);
 
-            String message_step3 = id_v + SEPARATOR + encryptedTicket + SEPARATOR + encryptedProof;
-            out.println(message_step3);
+            String message3 = String.join(SEPARATOR, id_v, encryptedTicket, encryptedProof);
+            System.out.println("Message 3: " + message3);
+            out.println(message3);
 
-            String encryptedMessage_step4 = in.readLine();
-            if(!socket.isClosed()) {
-                socket.close();
-            }
-            if (encryptedMessage_step4.startsWith("Error")) {
-                System.out.println("Server response: " + encryptedResponse);
+            // Step 4: TGS->C: E_K_CT(K_CV || ID_V || T4 || E_K_V(K_CV||ID||AD_C||T4||D_T4) )
+            String encrypted_message4 = in.readLine();
+            closeSocket(socket);
+            if (encrypted_message4.startsWith("ERROR")) {
+                System.out.println("Server response: " + encrypted_message4);
                 return;
             }
-            String message_step4 = Utils.decryptMessage(encryptedMessage_step4, k_ct);
-            System.out.println("STEP 4: " + message_step4);
+
+            String message_step4 = Utils.decryptMessage(encrypted_message4, k_ct);
+            System.out.println("Message 4: " + message_step4);
             parts = message_step4.split(SPLIT_SEPARATOR);
+
             String k_cv = parts[0];
             id_v = parts[1];
             String t4 = parts[2];
@@ -145,18 +98,20 @@ public class Client {
 
             //Step 5: C->V: E_KV(K_CV || ID || AD_C || T4 || DT4) || E_K_CV(ID||AD_C||T5)
             String t5 = String.valueOf(System.currentTimeMillis());
-            String proof5 = id + SEPARATOR + ad_c + SEPARATOR + t5;
+            String proof5 = String.join(SEPARATOR, id, ad_c, t5);
             String encrypted_proof5 = Utils.encryptMessage(proof5, k_cv);
-            String message5 = e_kv + SEPARATOR + encrypted_proof5;
+            String message5 = String.join(SEPARATOR, e_kv, encrypted_proof5);
 
-            socket = new Socket(echoserver, ECHO_SERVER_PORT);
+            socket = new Socket(echoServer, ECHO_SERVER_PORT);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             out = new PrintWriter(socket.getOutputStream(), true);
+            System.out.println("Message 5: " + message5);
             out.println(message5);
 
+            // STEP 6: V->C: E_K_CV(T5+1)
             String encrypted_message6 = in.readLine();
             if (encrypted_message6.startsWith("ERROR")) {
-                System.out.println("Server response: " + encryptedResponse);
+                System.out.println("Server response: " + encrypted_message6);
                 return;
             }
 
@@ -170,9 +125,7 @@ public class Client {
                 System.out.println(String.valueOf(t5Long));
                 System.out.println(message6);
                 out.println("ERROR");
-                if(!socket.isClosed()) {
-                    socket.close();
-                }
+                closeSocket(socket);
             }
 
             // STEP 7: C->V: E_K_CV(ID||AD_C||TIMESTAMP||PAYLOAD)||H(ID||AD_C||TIMESTAMP||PAYLOAD)
@@ -180,10 +133,10 @@ public class Client {
             String payload = scanner.nextLine();
             do {
                 String timestamp = String.valueOf(System.currentTimeMillis());
-                request = id + SEPARATOR + ad_c + SEPARATOR + timestamp + SEPARATOR + payload;
+                String request = String.join(SEPARATOR, id, ad_c, timestamp, payload);
                 String encryptedRequest = Utils.encryptMessage(request, k_cv);
-                String requestDigest = Utils.toHexString(messageDigestWrapper.computeDigest(Utils.toByteArray(request)));
-                message = encryptedRequest + SEPARATOR + requestDigest;
+                String requestDigest = Utils.getMessageDigest(request, "SHA-256");
+                message = String.join(SEPARATOR, encryptedRequest, requestDigest);
                 System.out.println(message);
                 out.println(message);
 
@@ -198,11 +151,42 @@ public class Client {
 
             } while(!payload.equals("STOP"));
 
-            if(!socket.isClosed()) {
-                socket.close();
-            }
+            closeSocket(socket);
+
         } catch (Exception e) {
             System.err.println(e.getMessage());
         }
+    }
+
+    private static void closeSocket(Socket socket) throws IOException {
+        if(socket.isClosed()) {
+            return;
+        }
+
+        socket.close();
+    }
+
+    private static void clientInitialization(String[] args) {
+        if (args.length != 3) {
+            System.out.println("ERROR: invalid number of arguments.");
+            System.out.println("Correct usage: java -cp src kerberos.Client <authserver> <tgs> <echoserver>");
+            System.exit(1);
+        }
+
+        authServer = args[0];
+        tgs = args[1];
+        echoServer = args[2];
+    }
+
+    private static String prompt(String message, String hint, Scanner scanner) {
+        System.out.println(message + " (hint: " + hint + ")");
+        String param = scanner.nextLine();
+
+        if(param == null || param.isEmpty()) {
+            System.out.println("Invalid param provided");
+            System.exit(1);
+        }
+
+        return param;
     }
 }

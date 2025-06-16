@@ -1,5 +1,6 @@
 package kerberos;
 
+import utils.EnvLoader;
 import utils.Utils;
 
 import java.io.*;
@@ -10,11 +11,12 @@ import java.util.Objects;
 
 public class EchoServer {
     private static final int PORT = 9002;
-    private static final String KV = "36f1b05e18373e82f4456847c5f59cd22363d653acf95c1b11f142d927c068d7";
     private static final String SEPARATOR = "||";
     private static final String SPLIT_SEPARATOR = "\\|\\|";
+    private static String KV;
 
     public static void main(String[] args) throws Exception {
+        KV = EnvLoader.get("K_V");
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("Echo Server running on port " + PORT);
 

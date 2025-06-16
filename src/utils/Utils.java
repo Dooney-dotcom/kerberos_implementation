@@ -71,6 +71,18 @@ public class Utils {
         return new String(decodedBytes, StandardCharsets.UTF_8);
     }
 
+    public static String getMessageDigest(String message, String algorithm) throws NoSuchAlgorithmException {
+        MessageDigestWrapper messageDigestWrapper = new MessageDigestWrapper(algorithm);
+        byte[] digest = messageDigestWrapper.computeDigest(Utils.toByteArray(message));
+        return Utils.toHexString(digest);
+    }
 
+    public static boolean isValid(String key) {
+        if (key == null) return false;
+        key = key.trim();
+        if (key.isEmpty()) return false;
+        if (key.length() < 32) return false;
+        return key.matches("^[0-9a-fA-F]+$");
+    }
 
 }
