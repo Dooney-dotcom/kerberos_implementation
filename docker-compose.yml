@@ -1,0 +1,50 @@
+services:
+  authserver:
+    build: .
+    container_name: authserver
+    command: ["java", "-cp", "src", "kerberos.AuthenticationServer"]
+    ports:
+      - "9000:9000"
+    networks:
+      - kerberos_network
+
+  tgs:
+    build: .
+    container_name: tgs
+    command: ["java", "-cp", "src", "kerberos.TicketGrantingServer"]
+    ports:
+      - "9001:9001"
+    depends_on:
+      - authserver
+    networks:
+      - kerberos_network
+
+  echoserver:
+    build: .
+    container_name: echoserver
+    command: ["java", "-cp", "src", "kerberos.EchoServer"]
+    ports:
+      - "9002:9002"
+    depends_on:
+      - tgs
+    networks:
+      - kerberos_network
+
+  client:
+    build:
+      context: .
+    container_name: client
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: ["java", "-cp", "src", "kerberos.Client", "authserver", "tgs", "echoserver"]
+    depends_on:
+      - echoserver
+      - tgs
+      - authserver
+    networks:
+      - kerberos_network
+
+networks:
+  kerberos_network:
+    driver: bridge
